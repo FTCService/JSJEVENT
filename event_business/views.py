@@ -1,0 +1,689 @@
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from .models import BizEvent, EventRegistration
+from .serializers import BizEventSerializer,EventRegistrationSerializer
+from django.shortcuts import get_object_or_404
+from drf_yasg.utils import swagger_auto_schema
+from drf_yasg import openapi
+from .authentication import SSOBusinessTokenAuthentication
+from rest_framework.permissions import IsAuthenticated
+from event_admin.models import FieldCategory
+from django.utils.timezone import now
+from django.utils import timezone
+from datetime import timedelta
+from django.core.paginator import Paginator
+from django.db.models import Q
+from datetime import datetime
+from django.template.loader import render_to_string
+import urllib.parse
+from helpers.utils import get_business_details_by_id, send_event_creation_email, send_bulk_email
+
+
+class BizEventListCreateView(APIView):
+    """List all events or create a new one"""
+    authentication_classes = [SSOBusinessTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        responses={200: BizEventSerializer(many=True)}
+    )
+    
+    def get(self, request):
+        status_filter = request.GET.get('status', None)
+
+        
+       
+        business = get_business_details_by_id(request.user.business_id)
+       
+        business_id=business.get("business_id")
+        
+        if not business_id:
+            
+            return Response({"message": "Business not found."}, status=status.HTTP_200_OK)
+
+        # Automatically update event status based on current time and end date
+        events = BizEvent.objects.filter(BizEventBizId=business_id)
+
+        now = timezone.now()
+        for event in events:
+            if event.BizEventEndDate < now and event.BizEventStatus == "active":
+                event.BizEventStatus = "inactive"
+                event.save()
+
+        # Now re-fetch after update
+        events = BizEvent.objects.filter(BizEventBizId=business_id)
+
+        if status_filter:
+            events = events.filter(BizEventStatus=status_filter)
+
+        events = events.order_by('-id')
+        serializer = BizEventSerializer(events, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+    @swagger_auto_schema(
+        request_body=BizEventSerializer,
+        responses={201: BizEventSerializer()},
+    )
+    def post(self, request):
+        """Create an event and associate it with the user's business"""
+
+        serializer = BizEventSerializer(data=request.data, context={"request": request})
+        if serializer.is_valid():
+            event = serializer.save()
+
+            business = get_business_details_by_id(request.user.business_id)
+            business_id = business.get("business_id")
+            email = business.get("email")
+            business_name = business.get("business_name")
+
+            send_event_creation_email(
+                business_email=email,
+                business_name=business_name,
+                event_title=event.BizEventTitle,
+                event_date=event.BizEventStartDate,
+                event_venue=event.BizEventLocation
+            )
+
+            return Response(
+                {"success": True, "message": "Event created successfully", "data": serializer.data},
+                status=status.HTTP_201_CREATED
+            )
+
+        return Response(
+            {"success": False, "error": serializer.errors},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+
+
+
+class BizEventDetailView(APIView):
+    """Retrieve, update, or delete an event by ID"""
+    @swagger_auto_schema(
+        responses={200: BizEventSerializer()}
+    )
+    def get(self, request, pk):
+        event = get_object_or_404(BizEvent, pk=pk)
+        serializer = BizEventSerializer(event)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    @swagger_auto_schema(
+        request_body=BizEventSerializer,
+        responses={200: BizEventSerializer()},
+    )
+    def put(self, request, pk):
+        event = get_object_or_404(BizEvent, pk=pk)
+        serializer = BizEventSerializer(event, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    @swagger_auto_schema(
+        responses={204: "Event deleted successfully"}
+    )
+    def delete(self, request, pk):
+        event = get_object_or_404(BizEvent, pk=pk)
+        event.delete()
+        return Response({"message": "Event deleted successfully"}, status=status.HTTP_204_NO_CONTENT)
+
+class BizEventStatusUpdateView(APIView):
+    """Activate or Deactivate an event"""
+
+    @swagger_auto_schema(
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                "BizEventStatus": openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    enum=["Active", "Inactive"],
+                    description="Update event status to 'Active' or 'Inactive'",
+                )
+            },
+            required=["BizEventStatus"]
+        ),
+        responses={200: openapi.Response("Event status updated successfully")}
+    )
+    def patch(self, request, pk):
+        """Update the event status"""
+        event = get_object_or_404(BizEvent, pk=pk)
+        new_status = request.data.get("BizEventStatus")
+
+        if new_status not in ["Active", "Inactive"]:
+            return Response(
+                {"success": False, "error": "Invalid status. Use 'Active' or 'Inactive'."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        event.BizEventStatus = new_status
+        event.save()
+
+        return Response(
+            {"success": True, "message": f"Event status updated to {new_status}"},
+            status=status.HTTP_200_OK
+        )
+
+
+
+
+
+class EventRegistrationFieldsFormattedApi(APIView):
+    """API to get all categories with their fields formatted as key-value pairs."""
+
+    # Define the response schema for Swagger
+    @swagger_auto_schema(
+        responses={
+            200: openapi.Response(
+                description="List of all categories with their fields formatted as key-value pairs.",
+                examples={
+                    "application/json": {
+                        "BasicInformation": {
+                            "first_name": {
+                                "label": "First Name",
+                                "field_id": "first_name",
+                                "field_type": "text",
+                                "is_required": True,
+                                "placeholder": "Enter your first name",
+                                
+                                "value": ""
+                            },
+                            "last_name": {
+                                "label": "Last Name",
+                                "field_id": "last_name",
+                                "field_type": "text",
+                                "is_required": False,
+                                "placeholder": "Enter your last name",
+                                "value": ""
+                            }
+                        },
+                        "workexperience": {},
+                        "skills": {
+                            "python": {
+                                "label": "Python",
+                                "field_id": "python",
+                                "field_type": "text",
+                                "is_required": True,
+                                "placeholder": "Enter your Python skills",
+                                "value": ""
+                            }
+                        }
+                    }
+                },
+            )
+        },
+        
+    )
+    def get(self, request):
+        # Get all categories and related fields
+        categories = FieldCategory.objects.prefetch_related("fields").all()
+
+        # Define the response structure
+        response_data = {}
+
+        # Loop through each category and prepare data
+        for category in categories:
+            category_fields = {}
+
+            # Loop through fields of each category
+            for field in category.fields.all():
+                # Prepare field details
+                field_data = {
+                    "label": field.label,
+                    "field_id": field.field_id,
+                    "field_type": field.field_type,
+                    "is_required": field.is_required,
+                    "placeholder": field.placeholder,
+                    "option": field.option,
+                    "value": [] if field.field_type == "checkbox" else None,
+                }
+
+                # Add field data with field_id as key
+                category_fields[field.field_id] = field_data
+
+            # Add category fields to the response
+            response_data[category.name] = category_fields
+
+        return Response(response_data, status=status.HTTP_200_OK)
+    
+    
+
+
+class MemberRegistrationListView(APIView):
+    """Retrieve all registrations for a specific event"""
+    authentication_classes = [SSOBusinessTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, event_id):
+        """Fetch all registrations for a given event_id"""
+        event = get_object_or_404(BizEvent, id=event_id)
+        registrations = EventRegistration.objects.filter(Event=event)
+        
+
+        if not registrations.exists():
+            return Response(
+                {"success": False, "message": "No registrations found for this event"},
+                status=status.HTTP_200_OK
+            )
+            
+        total_count = registrations.count()
+        attended_count = registrations.filter(EventAttended=True).count()
+        pending_count = total_count - attended_count
+
+        serializer = EventRegistrationSerializer(registrations, many=True)
+        return Response(
+            {"success": True, "message": "Registrations fetched successfully", "data": serializer.data,"total_registrations": total_count,
+                    "attended": attended_count,
+                    "pending_attendance": pending_count},
+            status=status.HTTP_200_OK
+        )
+        
+        
+        
+        
+class MemberAttendanceList(APIView):
+    """Retrieve all Member Attendance List for a specific event"""
+    authentication_classes = [SSOBusinessTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, event_id):
+        """Fetch all registrations for a given event_id"""
+        event = get_object_or_404(BizEvent, id=event_id)
+        registrations = EventRegistration.objects.filter(Event=event,EventAttended=True)
+        
+
+        if not registrations.exists():
+            return Response(
+                {"success": False, "message": "No registrations found for this event"},
+                status=status.HTTP_200_OK
+            )
+            
+        
+        serializer = EventRegistrationSerializer(registrations, many=True)
+        return Response(
+            {"success": True, "message": "Event Attended fetched successfully", "data": serializer.data,},
+            status=status.HTTP_200_OK
+        )
+        
+        
+        
+        
+class MemberPendingAttendanceList(APIView):
+    """Retrieve all Member pending Attendance List for a specific event"""
+    authentication_classes = [SSOBusinessTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, event_id):
+        """Fetch all registrations for a given event_id"""
+        event = get_object_or_404(BizEvent, id=event_id)
+        registrations = EventRegistration.objects.filter(Event=event,EventAttended=False)
+        
+
+        if not registrations.exists():
+            return Response(
+                {"success": False, "message": "No registrations found for this event"},
+                status=status.HTTP_200_OK
+            )
+            
+        
+        serializer = EventRegistrationSerializer(registrations, many=True)
+        return Response(
+            {"success": True, "message": "Event Pending Attended fetched successfully", "data": serializer.data,},
+            status=status.HTTP_200_OK
+        )
+        
+        
+class MemberRegistrationDetailView(APIView):
+    """Retrieve event registration details by event ID and member card number"""
+    authentication_classes = [SSOBusinessTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        responses={200: EventRegistrationSerializer(many=True)},
+    )
+    def get(self, request, event_id, cardno):
+        """Fetch event registration details by event ID and card number"""
+        try:
+            registrations = EventRegistration.objects.filter(Event_id=event_id, EventMbrCard_id=cardno)
+            
+            if not registrations.exists():
+                return Response(
+                    {"success": False, "message": "No registrations found"},
+                    status=status.HTTP_200_OK
+                )
+
+            serializer = EventRegistrationSerializer(registrations, many=True)
+            return Response(
+                {"success": True, "data": serializer.data},
+                status=status.HTTP_200_OK
+            )
+        
+        except Exception as e:
+            return Response(
+                {"success": False, "error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+
+
+class EventRegistrationView(APIView):
+    """Allows members to register for an event"""
+    authentication_classes = [SSOBusinessTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        request_body=EventRegistrationSerializer,
+        responses={201: EventRegistrationSerializer()},
+    )
+    def post(self, request, event_id):
+        """Register a member for an event"""
+        try:
+            event = BizEvent.objects.get(id=event_id)
+        except BizEvent.DoesNotExist:
+            return Response({"success": False, "error": "Event not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            member = Member.objects.get(mbrcardno=request.user.mbrcardno)
+        except Member.DoesNotExist:
+            return Response(
+                {"success": False, "error": "Member with this card number not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if EventRegistration.objects.filter(Event=event, EventMbrCard=member).exists():
+            return Response(
+                {"success": False, "message": "Member already registered for this event","EventRegistered":True },
+                status=status.HTTP_200_OK
+            )
+
+        registration_data = request.data
+        print(registration_data,"=========================")
+
+        basic_information = registration_data.get("basicInformation", {})
+        career_objectives = registration_data.get("CareerObjectivesPreferences", {})
+        education_details = registration_data.get("EducationDetails", {})
+        work_experience = registration_data.get("WorkExperience", {})
+        skills_competencies = registration_data.get("SkillsCompetencies", {})
+        achievements_extracurricular = registration_data.get("AchievementsExtracurricular", {})
+        other_details = registration_data.get("OtherDetails", {})
+
+        event_registration_data = {
+            "BasicInformation": basic_information,
+            "CareerObjectivesPreferences": career_objectives,
+            "EducationDetails": education_details,
+            "WorkExperience": work_experience,
+            "SkillsCompetencies": skills_competencies,
+            "AchievementsExtracurricular": achievements_extracurricular,
+            "OtherDetails": other_details,
+        }
+
+        registration = EventRegistration.objects.create(
+            Event=event,
+            EventMbrCard=member,
+            BasicInformation=basic_information,
+            CareerObjectivesPreferences=career_objectives,
+            EducationDetails=education_details,
+            WorkExperience=work_experience,
+            SkillsCompetencies=skills_competencies,
+            AchievementsExtracurricular=achievements_extracurricular,
+            OtherDetails=other_details,
+            EventRegistrationData=event_registration_data,
+            EventRegistered=True
+        )
+        
+        JobProfile.objects.update_or_create(
+            MbrCardNo=member,
+            defaults={
+                "BasicInformation": basic_information,
+                "CareerObjectivesPreferences": career_objectives,
+                "EducationDetails": education_details,
+                "WorkExperience": work_experience,
+                "SkillsCompetencies": skills_competencies,
+                "AchievementsExtracurricular": achievements_extracurricular,
+                "OtherDetails": other_details,
+            }
+        )
+        
+        # Extract email and full name from nested BasicInformation
+        email_info = basic_information.get("email", {}) or basic_information.get("email", {})
+        member_email = email_info.get("value", member.email)
+
+        name_info = basic_information.get("full_name", {}) or basic_information.get("name", {})
+        member_name = name_info.get("value", member.full_name)
+
+        if member_email:
+            send_event_registration_email(
+                member_email=member_email,
+                member_name=member_name,
+                event_title=event.BizEventTitle,
+                event_date=event.BizEventStartDate,
+                event_venue=event.BizEventLocation
+            )
+            
+        serializer = EventRegistrationSerializer(registration)
+        return Response(
+            {"EventRegistered":True,"success": True, "message": "Registration successful", "data": serializer.data},
+            status=status.HTTP_201_CREATED
+        )
+
+
+
+class EventAttendanceView(APIView):
+    """Allows event organizers to mark user attendance"""
+    authentication_classes = [SSOBusinessTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=["mbrcardno", "registration_data"],
+            properties={
+                "mbrcardno": openapi.Schema(type=openapi.TYPE_INTEGER, description="ID of the Member"),
+            },
+        ),
+        responses={201: EventRegistrationSerializer()}
+    )
+    def post(self, request, event_id):
+        mbrcardno = request.data.get("mbrcardno")
+
+        # Validate member card number
+        try:
+            member = Member.objects.get(mbrcardno=mbrcardno)
+        except Member.DoesNotExist:
+            return Response({"success": False, "message": "Member not found"},
+                            status=status.HTTP_200_OK)
+
+        # Check if the member is registered for the event
+        try:
+            registration = EventRegistration.objects.get(Event_id=event_id, EventMbrCard=member)
+        except EventRegistration.DoesNotExist:
+            return Response({"success": False, "message": "User not registered for this event"},
+                            status=status.HTTP_200_OK)
+
+        # Check if the user is already marked as attended
+        if registration.EventAttended:
+            return Response({"success": False, "message": "User already marked as attended"},
+                            status=status.HTTP_200_OK)
+
+        # Mark user as attended
+        registration.EventAttended = True
+        registration.save()
+
+        return Response({"success": True, "message": "Attendance marked successfully"},
+                        status=status.HTTP_200_OK)
+
+
+
+
+class EventDashboardAPIView(APIView):
+    authentication_classes = [SSOBusinessTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="Get dashboard metrics for the authenticated business user",
+        responses={
+            200: openapi.Response(
+                description="Dashboard stats",
+                examples={
+                    "application/json": {
+                        "total_events": 5,
+                        "total_registrations": 125,
+                        "total_attendance": 87,
+                        "time_series": [
+                            {"x": "2025-04-04", "registrations": 10, "attendances": 5},
+                            {"x": "2025-04-05", "registrations": 20, "attendances": 12},
+                            # ...
+                        ]
+                    }
+                }
+            )
+        }
+    )
+    def get(self, request):
+        user_business = request.user.business_id 
+
+        total_events = BizEvent.objects.filter(BizEventBizId=user_business).count()
+
+        total_registrations = EventRegistration.objects.filter(Event__BizEventBizId=user_business).count()
+
+        total_attendance = EventRegistration.objects.filter(
+            Event__BizEventBizId=user_business,
+            EventAttended=True
+        ).count()
+
+        time_series_data = []
+        for i in range(7):
+            day = now().date() - timedelta(days=6 - i)
+            registrations = EventRegistration.objects.filter(
+                Event__BizEventBizId=user_business,
+                created_at__date=day
+            ).count()
+
+            attendance = EventRegistration.objects.filter(
+                Event__BizEventBizId=user_business,
+                EventAttended=True,
+                created_at__date=day
+            ).count()
+
+            time_series_data.append({
+                "x": day.strftime("%Y-%m-%d"),
+                "registrations": registrations,
+                "attendances": attendance
+            })
+
+        return Response({
+            "total_events": total_events,
+            "total_registrations": total_registrations,
+            "total_attendance": total_attendance,
+            "time_series": time_series_data
+        })
+        
+        
+
+class AllEventAllRegistrations(APIView):
+    """
+    API to retrieve all event registrations across all events with pagination.
+    """
+    authentication_classes = [SSOBusinessTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        registrations = EventRegistration.objects.all().order_by("-created_at")
+        paginator = Paginator(registrations, 20)  # Adjust page size as needed
+
+        page_number = request.query_params.get('page', 1)
+        page_obj = paginator.get_page(page_number)
+
+        serializer = EventRegistrationSerializer(page_obj, many=True)
+
+        return Response({
+            "success": True,
+            "message": "All event registrations fetched successfully",
+            "count": paginator.count,
+            "total_pages": paginator.num_pages,
+            "current_page": page_obj.number,
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+        
+        
+class SendBulkEventEmail(APIView):
+    """
+    API to send bulk emails to a provided list of members.
+    Email and name are taken from request payload (frontend input format).
+    """
+    authentication_classes = [SSOBusinessTokenAuthentication]  # Add your CustomTokenAuthentication if required
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="Send bulk emails to recipients using a template.",
+        manual_parameters=[
+            openapi.Parameter(
+                'event_id',
+                openapi.IN_PATH,
+                description="ID of the event",
+                type=openapi.TYPE_INTEGER
+            )
+        ],
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=["subject", "body", "recipients"],
+            properties={
+                "subject": openapi.Schema(type=openapi.TYPE_STRING, description="Email Subject"),
+                "body": openapi.Schema(type=openapi.TYPE_STRING, description="Email Body (can be HTML)"),
+                "recipients": openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=openapi.Items(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            "name": openapi.Schema(type=openapi.TYPE_STRING),
+                            "email": openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_EMAIL),
+                        }
+                    ),
+                    description="List of recipients with name and email"
+                ),
+            }
+        ),
+        responses={200: openapi.Response(description="Result of sending emails")}
+    )
+    
+    def post(self, request):
+        subject = request.data.get("subject")
+        body = request.data.get("body")
+        recipients = request.data.get("recipients")
+
+        # Ensure required fields are present
+        if not subject or not body or not recipients:
+            return Response(
+                {"success": False, "message": "Subject, body, and recipients are required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        success_emails = []
+        failed_emails = []
+
+        # Process each recipient
+        for member in recipients:
+            member_name = member.get("name")
+            member_email = member.get("email")
+            if member_email:
+                # Render email template with context
+                context = {
+                    "name": member_name,   # Name of recipient
+                    "content": body        # Dynamic content you want to include in the email
+                }
+                html_content = render_to_string("event/email/bulk_email_template.html", context)
+
+                # Send the email using the custom send_email function
+                success = send_bulk_email(member_email, subject, html_content)
+                if success:
+                    success_emails.append(member_email)
+                else:
+                    failed_emails.append({"email": member_email, "reason": "Failed to send via API"})
+
+        return Response({
+            "success": True,
+            "message": "Emails processed.",
+            "emails_sent": success_emails,
+            "emails_failed": failed_emails
+        }, status=status.HTTP_200_OK)
