@@ -1,21 +1,28 @@
 from pathlib import Path
+import os
+import sys
+from dotenv import dotenv_values
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+sys.path.append(BASE_DIR)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-from dotenv import dotenv_values
+
 env_vars = dotenv_values(".env")
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-ff%0i60_#ut8)*mr==&2dc&^++ifyjcz#hv$@=y5cf4g!z%fyw'
+SECRET_KEY = str(os.getenv('SECRET_KEY'))
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env_vars['DEBUG']
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
@@ -43,6 +50,9 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    
+    'corsheaders.middleware.CorsMiddleware',
+    "whitenoise.middleware.WhiteNoiseMiddleware",
 ]
 
 ROOT_URLCONF = 'eventmanagement.urls'
@@ -50,7 +60,7 @@ ROOT_URLCONF = 'eventmanagement.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [os.path.join(BASE_DIR, 'templates')],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -82,7 +92,7 @@ DATABASES = {
         "NAME": env_vars["DB_NAME"],
         "USER": env_vars["DB_USER"],
         "PASSWORD": env_vars["DB_PASSWORD"],
-        "HOST": "127.0.0.1",
+        "HOST": "jsjcardtest.cl42kik08yj6.ap-south-1.rds.amazonaws.com",
         "PORT": "5432",
     }
 }
@@ -123,6 +133,8 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage" 
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -131,3 +143,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
  # Adjust based on jsjcardauth URL
 AUTH_SERVER_URL =env_vars['AUTH_SERVER_URL']
+
+
+# cros origin 
+CORS_ALLOW_ALL_ORIGINS = True
