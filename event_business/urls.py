@@ -9,6 +9,7 @@ urlpatterns = [
     path("create/events/", views.BizEventListCreateView.as_view(), name="event-list-create"),
     path("update/events/<int:pk>/", views.BizEventDetailView.as_view(), name="event-detail"),
     path("events/<int:pk>/status/", views.BizEventStatusUpdateView.as_view(), name="event-status"),
+    path('api/event-dashboard/', views.EventDashboardAPIView.as_view(), name='event-dashboard'),
     
     path("event-registration/field", views.EventRegistrationFieldsFormattedApi.as_view(), name="event-registration-fields"),
   
