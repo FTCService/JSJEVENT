@@ -14,7 +14,7 @@ class SSOUserTokenAuthentication(BaseAuthentication):
 
         try:
             response = requests.post(
-                settings.AUTH_SERVER_URL + "/verify-token/",
+                settings.AUTH_SERVER_URL + "/user/verify-token/",
                 json={"token": token},
                 timeout=5
             )
@@ -25,7 +25,7 @@ class SSOUserTokenAuthentication(BaseAuthentication):
             user = AuthenticatedUser(
                 id=data["id"],
                 employee_id=data["employee_id"],
-                business_name=data["full_name"],
+                full_name=data["full_name"],
                 email=data["email"]
             )
 
