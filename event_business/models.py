@@ -3,7 +3,7 @@ from django.db import models
 # Create your models here.
 from django.db import models
 from django.utils.timezone import now
-
+from django.utils import timezone
 class BizEvent(models.Model):
     EVENT_TYPES = [
         ('Career & Professional', 'Career & Professional Events'),
@@ -74,3 +74,22 @@ class EventRegistration(models.Model):
 
     def __str__(self):
         return f"Member Card No: {self.EventMbrCard} - Event: {self.Event.BizEventTitle}"
+    
+    
+    
+class TempUser(models.Model):
+    USER_TYPES = [
+        ('booth', 'Booth'),
+        ('volunteer', 'Volunteer'),
+    ]
+
+    full_name = models.CharField(max_length=255)
+    email = models.EmailField()
+    mobile_number = models.CharField(max_length=15)
+    user_type = models.CharField(max_length=20, choices=USER_TYPES)
+    token = models.CharField(max_length=255, unique=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()  # Expiration for token
+
+    def __str__(self):
+        return f"{self.full_name} ({self.user_type})"

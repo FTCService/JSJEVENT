@@ -1,10 +1,8 @@
-import random
 import requests
 from django.core.cache import cache
-import urllib.parse
-import pytz
-from datetime import datetime
 from django.conf import settings
+import threading
+from django.template.loader import render_to_string
 
 
 def get_member_details_by_card(card_number):
@@ -35,72 +33,47 @@ def get_business_details_by_id(business_id):
 
 
 
-def send_event_creation_email(business_email, business_name, event_title, event_date, event_venue):
-    subject = f"New Event Created: {event_title}"
-    body = f"""
-Dear {business_name},
 
-Your event titled "{event_title}" has been successfully created.
 
-📅 Date: {event_date}
-📍 Venue: {event_venue}
-
-You can view or manage your event in the JSJ Dashboard.
-
-For any queries, feel free to contact us:
-📧 contact@jsjcard.com
-📞 +91 99370 02897
-
-Best Regards,  
-JSJ Card Team
+def send_template_email(subject, template_name, context, recipient_list, attachments=None):
     """
-
-    api_url = "https://jfe0fa6le4.execute-api.ap-south-1.amazonaws.com/Version1/BulkEmail/"
-    encoded_subject = urllib.parse.quote(subject)
-    encoded_body = urllib.parse.quote(body)
-
-    try:
-        response = requests.get(
-            f"{api_url}?sender=contact@jsjcard.com&recipient={business_email}&subject={encoded_subject}&body={encoded_body}"
-        )
-
-        if response.status_code == 200:
-            print(f"✅ Email sent to: {business_email}")
-            return True
-        else:
-            print(f"❌ Failed to send email. Status: {response.status_code}")
-            return False
-    except Exception as e:
-        print(f"❌ Error sending email: {e}")
-        return False
-    
-    
-    
-def send_bulk_email(member_email, subject, body):
+    Send an email by invoking your AWS Lambda SES API.
+    Supports HTML content and optional attachments.
     """
-    Send an email using the external BulkEmail API.
-    """
-    api_url = "https://jfe0fa6le4.execute-api.ap-south-1.amazonaws.com/Version1/BulkEmail/"
+    # Render the HTML content
+    html_message = render_to_string(template_name, context)
 
-    # URL encode subject and body to be passed as query parameters
-    encoded_subject = urllib.parse.quote(subject)
-    encoded_body = urllib.parse.quote(body)
+    sender = "contact@jsjcard.com"  # Your verified SES sender email
+    recipient = recipient_list[0] if recipient_list else None
 
-    try:
-        # Send a GET request to your email API
-        response = requests.get(
-            f"{api_url}?sender=contact@jsjcard.com&recipient={member_email}&subject={encoded_subject}&body={encoded_body}"
-        )
+    if not recipient:
+        print("No recipient provided.")
+        return
 
-        # Check if the response status is 200 (successful)
-        if response.status_code == 200:
-            print(f"✅ Email sent to: {member_email}")
-            return True
-        else:
-            print(f"❌ Failed to send to {member_email}. Status: {response.status_code}")
-            print(f"Response Content: {response.content}")  # For debugging
-            return False
-    except requests.exceptions.RequestException as e:
-        # Log the exception if any error occurs while making the request
-        print(f"❌ Error sending to {member_email}: {e}")
-        return False
+    api_url = "https://w1yg18jn76.execute-api.ap-south-1.amazonaws.com/default/sesapi"
+
+    # Prepare payload
+    payload = {
+        "sender": sender,
+        "recipient": recipient,
+        "subject": subject,
+        "body": html_message
+    }
+
+    # If attachments are provided, encode them as JSON string
+    if attachments:
+        payload["attachments"] = attachments  # Must be a list of dicts as per your Lambda spec
+
+    headers = {"Content-Type": "application/json"}
+
+    def send_email():
+        try:
+            response = requests.post(api_url, json=payload, headers=headers)
+            if response.status_code == 200:
+                print("✅ Email sent successfully via AWS SES API.")
+            else:
+                print(f"❌ Failed to send email. Status: {response.status_code}, Response: {response.text}")
+        except Exception as e:
+            print(f"❌ Exception while sending email: {e}")
+
+    threading.Thread(target=send_email).start()
