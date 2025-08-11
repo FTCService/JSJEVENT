@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Welcome to JSJCard!</title>
+</head>
+<body>
+    <h2>Hello {{ full_name }},</h2>
+    <p>Welcome to JSJCard! You have been invited as a {{ user_type|default:"Event User" }}.</p>
+    <p>You can login using the following link (valid until {{ expires_at }}):</p>
+    <p><a href="{{ login_url }}">{{ login_url }}</a></p>
+    <br>
+    <p>Thank you,<br>JSJCard Team</p>
+</body>
+</html>

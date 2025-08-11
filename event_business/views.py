@@ -17,7 +17,11 @@ from django.db.models import Q
 from datetime import datetime
 from django.template.loader import render_to_string
 import urllib.parse
-from helpers.utils import get_business_details_by_id, send_event_creation_email, send_bulk_email
+from helpers.utils import get_business_details_by_id, send_template_email
+from . import models
+from helpers.temp_access import generate_temp_token, send_temp_login_link
+from .serializers import EventUserCreateSerializer, TempUserLoginSerializer
+
 
 
 class BizEventListCreateView(APIView):
@@ -686,4 +690,119 @@ class SendBulkEventEmail(APIView):
             "message": "Emails processed.",
             "emails_sent": success_emails,
             "emails_failed": failed_emails
+        }, status=status.HTTP_200_OK)
+
+
+
+
+class EventUserCreateApi(APIView):
+    authentication_classes = [SSOBusinessTokenAuthentication]  # your auth
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        request_body=EventUserCreateSerializer,
+        responses={
+            201: EventUserCreateSerializer,
+            400: 'Bad Request',
+        },
+        operation_description="Create a temporary event user (booth or volunteer) and generate login URL",
+    )
+    def post(self, request):
+        serializer = EventUserCreateSerializer(data=request.data)
+        if serializer.is_valid():
+            data = serializer.validated_data
+
+            # Prevent duplicate active token users with same email and type
+            if models.TempUser.objects.filter(email=data['email'], user_type=data['user_type']).exists():
+                return Response(
+                    {"error": f"Temp user with this email and type '{data['user_type']}' already exists."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            token = generate_temp_token()
+            expires_at = timezone.now() + timedelta(hours=1)
+
+            temp_user = models.TempUser.objects.create(
+                full_name=data['full_name'],
+                email=data['email'],
+                mobile_number=data['mobile_number'],
+                user_type=data['user_type'],
+                token=token,
+                expires_at=expires_at,
+            )
+
+            login_url = send_temp_login_link(temp_user)["login_url"]
+            # Prepare email context (adjust according to your needs)
+            email_context = {
+                'full_name': temp_user.full_name,
+                'email': temp_user.email,
+                'mobile_number': temp_user.mobile_number,
+                'login_url': login_url,
+                'expires_at': temp_user.expires_at.strftime('%Y-%m-%d %H:%M:%S'),
+            }
+
+            send_template_email(
+                subject="Welcome to JSJCard!",
+                template_name="email_template/event_user.html",
+                context=email_context,
+                recipient_list=[temp_user.email]
+            )
+            return Response({"login_url": login_url, "user_type": temp_user.user_type}, status=status.HTTP_201_CREATED)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    
+
+class TempUserLoginApi(APIView):
+
+    def get(self, request, token):
+        try:
+            temp_user = models.TempUser.objects.get(token=token)
+        except models.TempUser.DoesNotExist:
+            return Response({"error": "Invalid token"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if temp_user.expires_at < timezone.now():
+            return Response({"error": "Token expired"}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            "full_name": temp_user.full_name,
+            "email": temp_user.email,
+            "user_type": temp_user.user_type,
+            "token_valid": True
+        }, status=status.HTTP_200_OK)
+
+    def post(self, request, token):
+        serializer = TempUserLoginSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        email = serializer.validated_data['email']
+
+        try:
+            temp_user = models.TempUser.objects.get(token=token)
+        except models.TempUser.DoesNotExist:
+            return Response({"error": "Invalid token"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if temp_user.expires_at < timezone.now():
+            return Response({"error": "Token expired"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if temp_user.email.lower() != email.lower():
+            return Response({"error": "Email does not match"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Success: User authenticated
+
+        # You can:
+        # - Return the token so client can use it for further authenticated requests
+        # - Or generate a JWT here and return it instead
+
+        return Response({
+            "message": "Login successful",
+            "user": {
+                "full_name": temp_user.full_name,
+                "email": temp_user.email,
+                "mobile_number": temp_user.mobile_number,
+                "user_type": temp_user.user_type,
+            },
+            "token": temp_user.token,
+            "expires_at": temp_user.expires_at,
         }, status=status.HTTP_200_OK)

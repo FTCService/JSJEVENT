@@ -12,3 +12,4 @@ urlpatterns = [
     path("my-registrations/<int:event_id>/", views.MemberEventRegistrationView.as_view(), name="member-event-registration"),
     path('event/<int:event_id>/registration/', views.MbrEventRegistrationFormApi.as_view(), name='event-registration'),
 ]
+

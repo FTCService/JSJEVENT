@@ -29,3 +29,13 @@ class EventRegistrationSerializer(serializers.ModelSerializer):
 
 
 
+class EventUserCreateSerializer(serializers.Serializer):
+    full_name = serializers.CharField(max_length=255)
+    email = serializers.EmailField()
+    mobile_number = serializers.CharField(max_length=15)
+    user_type = serializers.ChoiceField(choices=[('booth', 'Booth'), ('volunteer', 'Volunteer')])
+    
+    
+
+class TempUserLoginSerializer(serializers.Serializer):
+    email = serializers.EmailField()
