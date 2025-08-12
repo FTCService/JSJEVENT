@@ -30,6 +30,7 @@ class EventRegistrationSerializer(serializers.ModelSerializer):
 
 
 class EventUserCreateSerializer(serializers.Serializer):
+    BoothEvent = serializers.IntegerField()
     full_name = serializers.CharField(max_length=255)
     email = serializers.EmailField()
     mobile_number = serializers.CharField(max_length=15)
