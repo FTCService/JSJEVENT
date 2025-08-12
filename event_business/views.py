@@ -6,7 +6,7 @@ from .serializers import BizEventSerializer,EventRegistrationSerializer
 from django.shortcuts import get_object_or_404
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-from .authentication import SSOBusinessTokenAuthentication
+from .authentication import SSOBusinessTokenAuthentication, TempUserTokenAuthentication
 from rest_framework.permissions import IsAuthenticated
 from event_admin.models import FieldCategory
 from django.utils.timezone import now
@@ -17,7 +17,7 @@ from django.db.models import Q
 from datetime import datetime
 from django.template.loader import render_to_string
 import urllib.parse
-from helpers.utils import get_business_details_by_id, send_template_email
+from helpers.utils import get_business_details_by_id, send_template_email, get_member_details_by_card
 from . import models
 from helpers.temp_access import generate_temp_token, send_temp_login_link
 from .serializers import EventUserCreateSerializer, TempUserLoginSerializer
@@ -82,13 +82,13 @@ class BizEventListCreateView(APIView):
             email = business.get("email")
             business_name = business.get("business_name")
 
-            send_event_creation_email(
-                business_email=email,
-                business_name=business_name,
-                event_title=event.BizEventTitle,
-                event_date=event.BizEventStartDate,
-                event_venue=event.BizEventLocation
-            )
+            # send_event_creation_email(
+            #     business_email=email,
+            #     business_name=business_name,
+            #     event_title=event.BizEventTitle,
+            #     event_date=event.BizEventStartDate,
+            #     event_venue=event.BizEventLocation
+            # )
 
             return Response(
                 {"success": True, "message": "Event created successfully", "data": serializer.data},
@@ -805,4 +805,69 @@ class TempUserLoginApi(APIView):
             },
             "token": temp_user.token,
             "expires_at": temp_user.expires_at,
+        }, status=status.HTTP_200_OK)
+        
+        
+
+class VolunteerTakeAttendance(APIView):
+    """
+    Allows volunteers to mark user attendance and store their marked members with timestamp.
+    """
+    authentication_classes = [TempUserTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=["mbrcardno"],
+            properties={
+                "mbrcardno": openapi.Schema(type=openapi.TYPE_INTEGER, description="ID of the Member"),
+            },
+        ),
+        responses={200: openapi.Response(description="Attendance response")},
+        tags=["Volunteer"]
+    )
+    def post(self, request, event_id):
+        mbrcardno = request.data.get("mbrcardno")
+        volunteer = request.user  # Authenticated Volunteer
+        
+        # Check if the volunteer is assigned to the event
+        if volunteer.Event is None or volunteer.Event.id != int(event_id):
+            return Response({"success": False, "message": "You are not assigned to this event"},
+                            status=status.HTTP_403_FORBIDDEN)
+        # Validate Member
+    
+        member = get_member_details_by_card(mbrcardno)
+        mbrcardno = member.get("mbrcardno")
+        # Validate Registration
+        try:
+            registration = EventRegistration.objects.get(Event_id=event_id, EventMbrCard=mbrcardno)
+        except EventRegistration.DoesNotExist:
+            return Response({"success": False, "message": "User not registered for this event"}, status=status.HTTP_200_OK)
+
+        if registration.EventAttended:
+            return Response({"success": False, "message": "User already marked as attended"}, status=status.HTTP_200_OK)
+
+        # Mark attendance
+        registration.EventAttended = True
+        registration.save()
+
+        # Append to AttendMember JSON
+        timestamp = now().isoformat()
+        attend_data = volunteer.AttendMember.get(str(event_id), [])
+
+        # Prevent duplicate entry
+        if any(entry["cardno"] == mbrcardno for entry in attend_data):
+            return Response({"success": False, "message": "Member already recorded by volunteer"}, status=status.HTTP_200_OK)
+
+        attend_data.append({"cardno": mbrcardno, "timestamp": timestamp})
+        volunteer.AttendMember[str(event_id)] = attend_data
+        volunteer.save()
+
+        return Response({
+            "success": True,
+            "message": "Attendance marked successfully",
+            "cardno": mbrcardno,
+            "marked_at": timestamp,
+            "total_attended_by_volunteer": len(attend_data)
         }, status=status.HTTP_200_OK)
