@@ -347,26 +347,26 @@ class MemberRegistrationDetailView(APIView):
     )
     def get(self, request, event_id, cardno):
         """Fetch event registration details by event ID and card number"""
-        try:
-            registrations = EventRegistration.objects.filter(Event_id=event_id, EventMbrCard_id=cardno)
-            
-            if not registrations.exists():
-                return Response(
-                    {"success": False, "message": "No registrations found"},
-                    status=status.HTTP_200_OK
-                )
-
-            serializer = EventRegistrationSerializer(registrations, many=True)
+        # try:
+        registrations = EventRegistration.objects.filter(Event_id=event_id, EventMbrCard=cardno)
+        
+        if not registrations.exists():
             return Response(
-                {"success": True, "data": serializer.data},
+                {"success": False, "message": "No registrations found"},
                 status=status.HTTP_200_OK
             )
-        
-        except Exception as e:
-            return Response(
-                {"success": False, "error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+
+        serializer = EventRegistrationSerializer(registrations, many=True)
+        return Response(
+            {"success": True, "data": serializer.data},
+            status=status.HTTP_200_OK
+        )
+    
+        # except Exception as e:
+        #     return Response(
+        #         {"success": False, "error": str(e)},
+        #         status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        #     )
 
 
 
@@ -492,15 +492,16 @@ class EventAttendanceView(APIView):
         mbrcardno = request.data.get("mbrcardno")
 
         # Validate member card number
-        try:
-            member = Member.objects.get(mbrcardno=mbrcardno)
-        except Member.DoesNotExist:
+        
+        member_data = get_member_details_by_card(mbrcardno)
+        card_number = member_data.get("mbrcardno")
+        if not card_number:
             return Response({"success": False, "message": "Member not found"},
                             status=status.HTTP_200_OK)
 
         # Check if the member is registered for the event
         try:
-            registration = EventRegistration.objects.get(Event_id=event_id, EventMbrCard=member)
+            registration = EventRegistration.objects.get(Event_id=event_id, EventMbrCard=card_number)
         except EventRegistration.DoesNotExist:
             return Response({"success": False, "message": "User not registered for this event"},
                             status=status.HTTP_200_OK)
