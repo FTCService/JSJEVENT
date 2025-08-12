@@ -2,7 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from event_business.models import BizEvent, EventRegistration
-from .serializers import  MbrEventSerializer
+from .serializers import  MbrEventSerializer, EventRegistrationSerializer
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from .authentication import SSOMemberTokenAuthentication
@@ -116,7 +116,7 @@ class MemberEventRegistrationView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, event_id):
-        member = request.user
+        member = request.user.mbrcardno
 
         try:
             event = BizEvent.objects.get(id=event_id)
@@ -149,6 +149,111 @@ class MemberEventRegistrationView(APIView):
 def extract_label_value(data):
             return {key: {"label": val.get("label"), "value": val.get("value")} for key, val in data.items()}
         
+
+
+
+class EventRegistrationView(APIView):
+    """Allows members to register for an event"""
+    authentication_classes = [SSOMemberTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        request_body=EventRegistrationSerializer,
+        responses={201: EventRegistrationSerializer()},tags=['Event Registration'],
+    )
+    def post(self, request, event_id):
+        """Register a member for an event"""
+        try:
+            event = BizEvent.objects.get(id=event_id)
+        except BizEvent.DoesNotExist:
+            return Response({"success": False, "error": "Event not found"}, status=status.HTTP_404_NOT_FOUND)
+
+       
+        member = request.user.mbrcardno
+        if not member:
+            return Response(
+                {"success": False, "error": "Member with this card number not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if EventRegistration.objects.filter(Event=event, EventMbrCard=member).exists():
+            return Response(
+                {"success": False, "message": "Member already registered for this event","EventRegistered":True },
+                status=status.HTTP_200_OK
+            )
+
+        registration_data = request.data
+        print(registration_data,"=========================")
+
+        basic_information = registration_data.get("basicInformation", {})
+        career_objectives = registration_data.get("CareerObjectivesPreferences", {})
+        education_details = registration_data.get("EducationDetails", {})
+        work_experience = registration_data.get("WorkExperience", {})
+        skills_competencies = registration_data.get("SkillsCompetencies", {})
+        achievements_extracurricular = registration_data.get("AchievementsExtracurricular", {})
+        other_details = registration_data.get("OtherDetails", {})
+
+        event_registration_data = {
+            "BasicInformation": basic_information,
+            "CareerObjectivesPreferences": career_objectives,
+            "EducationDetails": education_details,
+            "WorkExperience": work_experience,
+            "SkillsCompetencies": skills_competencies,
+            "AchievementsExtracurricular": achievements_extracurricular,
+            "OtherDetails": other_details,
+        }
+
+        registration = EventRegistration.objects.create(
+            Event=event,
+            EventMbrCard=member,
+            BasicInformation=basic_information,
+            CareerObjectivesPreferences=career_objectives,
+            EducationDetails=education_details,
+            WorkExperience=work_experience,
+            SkillsCompetencies=skills_competencies,
+            AchievementsExtracurricular=achievements_extracurricular,
+            OtherDetails=other_details,
+            EventRegistrationData=event_registration_data,
+            EventRegistered=True
+        )
+        
+        # JobProfile.objects.update_or_create(
+        #     MbrCardNo=member,
+        #     defaults={
+        #         "BasicInformation": basic_information,
+        #         "CareerObjectivesPreferences": career_objectives,
+        #         "EducationDetails": education_details,
+        #         "WorkExperience": work_experience,
+        #         "SkillsCompetencies": skills_competencies,
+        #         "AchievementsExtracurricular": achievements_extracurricular,
+        #         "OtherDetails": other_details,
+        #     }
+        # )
+        
+        # Extract email and full name from nested BasicInformation
+        # email_info = basic_information.get("email", {}) or basic_information.get("email", {})
+        # member_email = email_info.get("value", member.email)
+
+        # name_info = basic_information.get("full_name", {}) or basic_information.get("name", {})
+        # member_name = name_info.get("value", member.full_name)
+
+        # if member_email:
+        #     send_event_registration_email(
+        #         member_email=member_email,
+        #         member_name=member_name,
+        #         event_title=event.BizEventTitle,
+        #         event_date=event.BizEventStartDate,
+        #         event_venue=event.BizEventLocation
+        #     )
+            
+        serializer = EventRegistrationSerializer(registration)
+        return Response(
+            {"EventRegistered":True,"success": True, "message": "Registration successful", "data": serializer.data},
+            status=status.HTTP_201_CREATED
+        )
+
+
+
 
 
 
