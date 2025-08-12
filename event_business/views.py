@@ -699,7 +699,32 @@ class SendBulkEventEmail(APIView):
 class EventUserCreateApi(APIView):
     authentication_classes = [SSOBusinessTokenAuthentication]  # your auth
     permission_classes = [IsAuthenticated]
+    def get(self, request):
+        business_id = request.user.business_id
+        
+        # ✅ Get all events for the current business
+        events = BizEvent.objects.filter(BizEventBizId=business_id)
 
+        # ✅ Get booths linked to these events
+        booths = models.TempUser.objects.filter(
+            event__in=events,
+            user_type='booth'
+        ).order_by('id')
+
+        # ✅ Prepare response data
+        data = [
+            {
+                "id": b.id,
+                "full_name": b.full_name,
+                "email": b.email,
+                "mobile_number": b.mobile_number,
+                "event_id": b.event.id,
+                "event_name": b.event.BizEventTitle 
+            }
+            for b in booths
+        ]
+
+        return Response({"data": data}, status=status.HTTP_200_OK)
     @swagger_auto_schema(
         request_body=EventUserCreateSerializer,
         responses={
@@ -713,6 +738,12 @@ class EventUserCreateApi(APIView):
         if serializer.is_valid():
             data = serializer.validated_data
 
+            # Get event object
+            try:
+                event = BizEvent.objects.get(id=data['BoothEvent'])
+            except BizEvent.DoesNotExist:
+                return Response({"error": "Event not found."}, status=status.HTTP_404_NOT_FOUND)
+
             # Prevent duplicate active token users with same email and type
             if models.TempUser.objects.filter(email=data['email'], user_type=data['user_type']).exists():
                 return Response(
@@ -724,6 +755,7 @@ class EventUserCreateApi(APIView):
             expires_at = timezone.now() + timedelta(hours=1)
 
             temp_user = models.TempUser.objects.create(
+                event=event,  # ✅ required field
                 full_name=data['full_name'],
                 email=data['email'],
                 mobile_number=data['mobile_number'],
@@ -733,7 +765,7 @@ class EventUserCreateApi(APIView):
             )
 
             login_url = send_temp_login_link(temp_user)["login_url"]
-            # Prepare email context (adjust according to your needs)
+
             email_context = {
                 'full_name': temp_user.full_name,
                 'email': temp_user.email,
@@ -748,11 +780,12 @@ class EventUserCreateApi(APIView):
                 context=email_context,
                 recipient_list=[temp_user.email]
             )
+
             return Response({"login_url": login_url, "user_type": temp_user.user_type}, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    
+
+
 
 class TempUserLoginApi(APIView):
 
