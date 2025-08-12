@@ -82,7 +82,8 @@ class TempUser(models.Model):
         ('booth', 'Booth'),
         ('volunteer', 'Volunteer'),
     ]
-
+    
+    event = models.ForeignKey(BizEvent, on_delete=models.CASCADE, related_name='temp_users')
     full_name = models.CharField(max_length=255)
     email = models.EmailField()
     mobile_number = models.CharField(max_length=15)
