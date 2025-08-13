@@ -988,7 +988,7 @@ class VolunteerTakeAttendance(APIView):
     )
     def post(self, request, event_id):
         mbrcardno = request.data.get("mbrcardno")
-        volunteer = request.user  # this is the TempUser instance
+        volunteer = request.user # this is the TempUser instance
 
         # Check if the volunteer is assigned to the event
         if volunteer.event_id != int(event_id):
