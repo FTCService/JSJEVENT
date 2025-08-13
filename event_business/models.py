@@ -91,6 +91,10 @@ class TempUser(models.Model):
     token = models.CharField(max_length=255, unique=True)
     created_at = models.DateTimeField(default=timezone.now)
     expires_at = models.DateTimeField()  # Expiration for token
-
+    boothintraction = models.JSONField(default=dict)
     def __str__(self):
         return f"{self.full_name} ({self.user_type})"
+    
+    @property
+    def is_authenticated(self):
+        return True

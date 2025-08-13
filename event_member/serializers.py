@@ -11,7 +11,3 @@ class MbrEventSerializer(serializers.ModelSerializer):
         fields = '__all__'
         
         
-class EventRegistrationSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = EventRegistration
-        fields = "__all__"
