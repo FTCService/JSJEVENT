@@ -25,6 +25,19 @@ DEBUG = env_vars['DEBUG']
 ALLOWED_HOSTS = ["*"]
 
 
+# AUTH_USER_MODEL = "evevnt_business.TempUser"
+AUTHENTICATION_BACKENDS = [
+    'event_business.authentication.TempUserTokenAuthentication',
+]
+
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        "rest_framework.authentication.BasicAuthentication",  
+        'rest_framework.authentication.TokenAuthentication',
+        
+    ),
+}
 # Application definition
 
 INSTALLED_APPS = [

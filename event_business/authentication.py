@@ -53,26 +53,18 @@ from rest_framework.exceptions import AuthenticationFailed
 from event_business.models import TempUser
 from django.utils import timezone
 
+# authentication.py
 class TempUserTokenAuthentication(BaseAuthentication):
     def authenticate(self, request):
         auth_header = request.headers.get('Authorization')
-        if not auth_header:
+        if not auth_header or not auth_header.startswith("Token "):
             return None
 
-        try:
-            prefix, token = auth_header.split()
-        except ValueError:
-            raise AuthenticationFailed("Invalid token header")
-
-        if prefix.lower() != "token":
-            return None
+        token = auth_header.split("Token ")[1]
 
         try:
             temp_user = TempUser.objects.get(token=token)
         except TempUser.DoesNotExist:
             raise AuthenticationFailed("Invalid token")
-
-        if temp_user.expires_at < timezone.now():
-            raise AuthenticationFailed("Token expired")
 
         return (temp_user, None)

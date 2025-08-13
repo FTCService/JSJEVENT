@@ -20,7 +20,7 @@ import urllib.parse
 from helpers.utils import get_business_details_by_id, send_template_email, get_member_details_by_card
 from . import models
 from helpers.temp_access import generate_temp_token, send_temp_login_link
-from .serializers import EventUserCreateSerializer, TempUserLoginSerializer
+from .serializers import EventUserCreateSerializer, TempUserLoginSerializer,ManageBoothParticipantSerializer
 
 
 
@@ -106,6 +106,9 @@ class BizEventListCreateView(APIView):
 
 class BizEventDetailView(APIView):
     """Retrieve, update, or delete an event by ID"""
+    authentication_classes = [SSOBusinessTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
     @swagger_auto_schema(
         responses={200: BizEventSerializer()}
     )
@@ -174,6 +177,8 @@ class BizEventStatusUpdateView(APIView):
 
 class EventRegistrationFieldsFormattedApi(APIView):
     """API to get all categories with their fields formatted as key-value pairs."""
+    authentication_classes = [SSOBusinessTokenAuthentication]
+    permission_classes = [IsAuthenticated]
 
     # Define the response schema for Swagger
     @swagger_auto_schema(
@@ -789,11 +794,15 @@ class EventUserCreateApi(APIView):
 
 class TempUserLoginApi(APIView):
 
-    def get(self, request, token):
+    def get(self, request, token, event_id, user_type):
         try:
-            temp_user = models.TempUser.objects.get(token=token)
+            temp_user = models.TempUser.objects.get(
+                token=token, 
+                event_id=event_id, 
+                user_type=user_type
+            )
         except models.TempUser.DoesNotExist:
-            return Response({"error": "Invalid token"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Invalid token or user type"}, status=status.HTTP_400_BAD_REQUEST)
 
         if temp_user.expires_at < timezone.now():
             return Response({"error": "Token expired"}, status=status.HTTP_400_BAD_REQUEST)
@@ -801,11 +810,12 @@ class TempUserLoginApi(APIView):
         return Response({
             "full_name": temp_user.full_name,
             "email": temp_user.email,
+            "token": temp_user.token,
             "user_type": temp_user.user_type,
             "token_valid": True
         }, status=status.HTTP_200_OK)
 
-    def post(self, request, token):
+    def post(self, request, token, event_id, user_type):
         serializer = TempUserLoginSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -813,21 +823,19 @@ class TempUserLoginApi(APIView):
         email = serializer.validated_data['email']
 
         try:
-            temp_user = models.TempUser.objects.get(token=token)
+            temp_user = models.TempUser.objects.get(
+                token=token, 
+                event_id=event_id, 
+                user_type=user_type
+            )
         except models.TempUser.DoesNotExist:
-            return Response({"error": "Invalid token"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Invalid token or user type"}, status=status.HTTP_400_BAD_REQUEST)
 
-        if temp_user.expires_at < timezone.now():
-            return Response({"error": "Token expired"}, status=status.HTTP_400_BAD_REQUEST)
+        # if temp_user.expires_at < timezone.now():
+        #     return Response({"error": "Token expired"}, status=status.HTTP_400_BAD_REQUEST)
 
         if temp_user.email.lower() != email.lower():
             return Response({"error": "Email does not match"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Success: User authenticated
-
-        # You can:
-        # - Return the token so client can use it for further authenticated requests
-        # - Or generate a JWT here and return it instead
 
         return Response({
             "message": "Login successful",
@@ -840,8 +848,125 @@ class TempUserLoginApi(APIView):
             "token": temp_user.token,
             "expires_at": temp_user.expires_at,
         }, status=status.HTTP_200_OK)
+
         
+
+class MemberParticipantBooth(APIView):
+    """
+    API to manage and retrieve participant details in the event booth,
+    using card number or mobile number.
+    """
+
+    authentication_classes = [TempUserTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        manual_parameters=[
+            openapi.Parameter('card_no', openapi.IN_QUERY, description="Card number or Mobile number", type=openapi.TYPE_STRING),
+        ],
+        responses={200: "Participant details"},
+        tags=[" Booth "]
+    )
+    def get(self, request, event_id):
+        card_no = request.GET.get("card_no")
+        if not card_no:
+            return Response({"error": "Please provide a card number or mobile number."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+      
+        # Check if booth is assigned to user
+        booth = models.TempUser.objects.get(id=request.user.id, event_id=event_id)
         
+        # Try both number and string matches
+        participant = EventRegistration.objects.filter(
+            EventMbrCard=card_no,
+            Event_id=event_id
+        ).first()
+        # print(participant,"==================")
+        if not participant:
+            return Response({"success":False,"message": "Participant not found for this event."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        # try:
+        participant_info = {
+            "participant_id": participant.id,
+            "card_no": participant.EventMbrCard,
+            "event_id": participant.Event.id,
+            "event_name": getattr(participant.Event, "BizEventTitle", None),
+            "BasicInformation": participant.BasicInformation,
+            "CareerObjectivesPreferences": participant.CareerObjectivesPreferences,
+            "EducationDetails": participant.EducationDetails,
+            "WorkExperience": participant.WorkExperience,
+            "SkillsCompetencies": participant.SkillsCompetencies,
+            "AchievementsExtracurricular": participant.AchievementsExtracurricular,
+            "OtherDetails": participant.OtherDetails,
+            # "EventRegistrationData": participant.EventRegistrationData,
+            "EventAttended": participant.EventAttended,
+            "EventRegistered": participant.EventRegistered,
+            "created_at": participant.created_at,
+        }
+
+        return Response(participant_info, status=status.HTTP_200_OK)
+        # except Exception as e:
+        #     return Response({"error": f"Error parsing participant data: {str(e)}"},
+        #                     status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    @swagger_auto_schema(
+    request_body=ManageBoothParticipantSerializer,
+    tags=[" Booth "]
+    )
+    def post(self, request, event_id):
+        """
+        Add or update participant information in a booth for a specific event using card or mobile number.
+        Save full participant response with timestamp.
+        """
+        serializer = ManageBoothParticipantSerializer(data=request.data)
+        if serializer.is_valid():
+            card_no = serializer.validated_data["card_no"]
+            status_value = serializer.validated_data["status"]
+            comment = serializer.validated_data["comment"]
+
+            
+            booth = models.TempUser.objects.get(id=request.user.id, event_id=event_id)
+
+            # Search participant by card or mobile number
+            participant = EventRegistration.objects.filter(
+                Q(EventMbrCard=card_no) | Q(BasicInformation__mobile_number__value=card_no),
+                Event_id=event_id
+            ).first()
+
+            if not participant:
+                return Response({"error": "Participant not found for this event."},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            # Prepare data to save
+            entry = {
+                "card_no": card_no,
+                "status": status_value,
+                "comment": comment,
+                "timestamp": datetime.now().isoformat(),
+                "BasicInformation": participant.BasicInformation,
+                "CareerObjectivesPreferences": participant.CareerObjectivesPreferences,
+                "EducationDetails": participant.EducationDetails,
+                "WorkExperience": participant.WorkExperience,
+                "SkillsCompetencies": participant.SkillsCompetencies,
+                "AchievementsExtracurricular": participant.AchievementsExtracurricular,
+                "OtherDetails": participant.OtherDetails,
+            }
+
+            if booth.boothintraction is None:
+                booth.boothintraction = {}
+
+            # Save by participant ID as key
+            booth.boothintraction[str(participant.id)] = entry
+            booth.save()
+
+            return Response({"message": "Participant details updated and saved successfully."},
+                            status=status.HTTP_200_OK)
+
+          
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 
 class VolunteerTakeAttendance(APIView):
     """
@@ -863,24 +988,33 @@ class VolunteerTakeAttendance(APIView):
     )
     def post(self, request, event_id):
         mbrcardno = request.data.get("mbrcardno")
-        volunteer = request.user  # Authenticated Volunteer
-        
+        volunteer = request.user  # this is the TempUser instance
+
         # Check if the volunteer is assigned to the event
-        if volunteer.Event is None or volunteer.Event.id != int(event_id):
-            return Response({"success": False, "message": "You are not assigned to this event"},
-                            status=status.HTTP_403_FORBIDDEN)
+        if volunteer.event_id != int(event_id):
+            return Response(
+                {"success": False, "message": "You are not assigned to this event"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         # Validate Member
-    
         member = get_member_details_by_card(mbrcardno)
         mbrcardno = member.get("mbrcardno")
+
         # Validate Registration
         try:
             registration = EventRegistration.objects.get(Event_id=event_id, EventMbrCard=mbrcardno)
         except EventRegistration.DoesNotExist:
-            return Response({"success": False, "message": "User not registered for this event"}, status=status.HTTP_200_OK)
+            return Response(
+                {"success": False, "message": "User not registered for this event"},
+                status=status.HTTP_200_OK
+            )
 
         if registration.EventAttended:
-            return Response({"success": False, "message": "User already marked as attended"}, status=status.HTTP_200_OK)
+            return Response(
+                {"success": False, "message": "User already marked as attended"},
+                status=status.HTTP_200_OK
+            )
 
         # Mark attendance
         registration.EventAttended = True
@@ -888,14 +1022,17 @@ class VolunteerTakeAttendance(APIView):
 
         # Append to AttendMember JSON
         timestamp = now().isoformat()
-        attend_data = volunteer.AttendMember.get(str(event_id), [])
 
+        attend_data = volunteer.boothintraction.get(str(event_id), [])
         # Prevent duplicate entry
         if any(entry["cardno"] == mbrcardno for entry in attend_data):
-            return Response({"success": False, "message": "Member already recorded by volunteer"}, status=status.HTTP_200_OK)
+            return Response(
+                {"success": False, "message": "Member already recorded by volunteer"},
+                status=status.HTTP_200_OK
+            )
 
         attend_data.append({"cardno": mbrcardno, "timestamp": timestamp})
-        volunteer.AttendMember[str(event_id)] = attend_data
+        volunteer.boothintraction[str(event_id)] = attend_data
         volunteer.save()
 
         return Response({
@@ -905,3 +1042,7 @@ class VolunteerTakeAttendance(APIView):
             "marked_at": timestamp,
             "total_attended_by_volunteer": len(attend_data)
         }, status=status.HTTP_200_OK)
+
+
+
+

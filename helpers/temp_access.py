@@ -37,9 +37,19 @@ def remove_token(token):
 
 # New helper function to generate login URL including user_type query param
 def send_temp_login_link(temp_user):
-    # Ensure your settings.py has SITE_URL defined, e.g. SITE_URL = "https://example.com"
-    base_url = f"{settings.SITE_URL}/temp-login/{temp_user.token}/"
-    login_url = f"{base_url}?type={temp_user.user_type}"
+    """
+    Generate login URL for temp users:
+    - Booths go to /booth/login
+    - Volunteers go to /volunteer/login
+    """
+    if temp_user.user_type.lower() == "booth":
+        base_url = f"{settings.SITE_URL}/booth/login"
+    else:
+        base_url = f"{settings.SITE_URL}/volunteer/login"
+
+    login_url = f"{base_url}/{temp_user.token}/{temp_user.event.id}/{temp_user.user_type}"
+    
     return {
         "login_url": login_url
     }
+

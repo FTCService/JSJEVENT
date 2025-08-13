@@ -20,7 +20,12 @@ urlpatterns = [
     
     path('all/registrations/', views.AllEventAllRegistrations.as_view(), name='all_event_all_registrations'),
     path("create-event-user/", views.EventUserCreateApi.as_view(), name="create-event-user"),
-    path('temp-login/<str:token>/', views.TempUserLoginApi.as_view(), name='temp-login'),
+    path('login/<str:token>/<int:event_id>/<str:user_type>/', views.TempUserLoginApi.as_view(), name='temp-user-login'),
+    
+    path("booth/participant/<event_id>/", views.MemberParticipantBooth.as_view(), name="manage-booth-participant"),
+    
+    path("volunteer/take/attendance/<int:event_id>/", views.VolunteerTakeAttendance.as_view(), name="volunteer-attendance"),
+    
 ]
 
   

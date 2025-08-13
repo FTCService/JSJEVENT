@@ -40,3 +40,10 @@ class EventUserCreateSerializer(serializers.Serializer):
 
 class TempUserLoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
+    
+    
+
+class ManageBoothParticipantSerializer(serializers.Serializer):
+    card_no = serializers.CharField(max_length=255)
+    status = serializers.ChoiceField(choices=['hired', 'shortlisted', 'rejected'])
+    comment = serializers.CharField(max_length=1024, required=False)
