@@ -14,5 +14,8 @@ urlpatterns = [
     path('self-attendance/', views.MemberSelfAttendanceApi.as_view(), name='member-self-attendance'),
 
     path('event/<int:event_id>/registration/', views.MbrEventRegistrationFormApi.as_view(), name='event-registration'),
+    
+    
+    path('event/entry/<int:event_id>/',views.EventEntryPassRegistrationApi.as_view(),name='event-registration-entry'),
 ]
 
