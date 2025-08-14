@@ -312,7 +312,7 @@ class MemberSelfAttendanceApi(APIView):
             return Response({
                 "status": False,
                 "message": "Member is not registered for this event"
-            }, status=status.HTTP_200_OK)
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         if registration.EventAttended:
             return Response({
@@ -336,6 +336,8 @@ class MbrEventRegistrationFormApi(APIView):
     """
     API to fetch all fields from BizEventRegistrationForm for a given event ID.
     """
+    authentication_classes = [SSOMemberTokenAuthentication]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, event_id):
         # Fetch the event by ID
@@ -360,4 +362,89 @@ class MbrEventRegistrationFormApi(APIView):
                 "BizEventRegistrationForm": registration_form_data,
             },
             status=status.HTTP_200_OK,
+        )
+        
+        
+        
+
+class EventEntryPassRegistrationApi(APIView):
+    """Allows members to register for an event"""
+    # authentication_classes = [SSOMemberTokenAuthentication]  # Remove for direct API call
+    # permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        request_body=EventRegistrationSerializer,
+        responses={201: EventRegistrationSerializer()},
+        tags=['Event Registration'],
+    )
+    def post(self, request, event_id):
+        """Register a member for an event by card number"""
+        
+        # 1️⃣ Validate Event
+        try:
+            event = BizEvent.objects.get(id=event_id)
+        except BizEvent.DoesNotExist:
+            return Response(
+                {"success": False, "error": "Event not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # 2️⃣ Get card number from payload
+        member_card_number = request.data.get("EventMbrCard")
+        if not member_card_number:
+            return Response(
+                {"success": False, "error": "EventMbrCard (card number) is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 3️⃣ Check duplicate registration
+        if EventRegistration.objects.filter(Event=event, EventMbrCard=member_card_number).exists():
+            return Response(
+                {"success": False, "message": "Member already registered for this event", "EventRegistered": True},
+                status=status.HTTP_200_OK
+            )
+
+        # 4️⃣ Extract registration data
+        basic_information = request.data.get("BasicInformation", {})
+        career_objectives = request.data.get("CareerObjectivesPreferences", {})
+        education_details = request.data.get("EducationDetails", {})
+        work_experience = request.data.get("WorkExperience", {})
+        skills_competencies = request.data.get("SkillsCompetencies", {})
+        achievements_extracurricular = request.data.get("AchievementsExtracurricular", {})
+        other_details = request.data.get("OtherDetails", {})
+
+        event_registration_data = {
+            "BasicInformation": basic_information,
+            "CareerObjectivesPreferences": career_objectives,
+            "EducationDetails": education_details,
+            "WorkExperience": work_experience,
+            "SkillsCompetencies": skills_competencies,
+            "AchievementsExtracurricular": achievements_extracurricular,
+            "OtherDetails": other_details,
+        }
+
+        # 5️⃣ Create registration
+        registration = EventRegistration.objects.create(
+            Event=event,
+            EventMbrCard=member_card_number,
+            BasicInformation=basic_information,
+            CareerObjectivesPreferences=career_objectives,
+            EducationDetails=education_details,
+            WorkExperience=work_experience,
+            SkillsCompetencies=skills_competencies,
+            AchievementsExtracurricular=achievements_extracurricular,
+            OtherDetails=other_details,
+            EventRegistrationData=event_registration_data,
+            EventRegistered=True
+        )
+
+        serializer = EventRegistrationSerializer(registration)
+        return Response(
+            {
+                "EventRegistered": True,
+                "success": True,
+                "message": "Registration successful",
+                "data": serializer.data
+            },
+            status=status.HTTP_201_CREATED
         )
