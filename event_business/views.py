@@ -702,31 +702,42 @@ class SendBulkEventEmail(APIView):
 
 
 class EventUserCreateApi(APIView):
-    authentication_classes = [SSOBusinessTokenAuthentication]  # your auth
+    authentication_classes = [SSOBusinessTokenAuthentication]
     permission_classes = [IsAuthenticated]
+
     def get(self, request):
         business_id = request.user.business_id
         
+        # ✅ Read query parameter: defaults to 'booth' if not provided
+        user_type = request.query_params.get('usertype', 'booth').lower()
+
+        # ✅ Ensure only allowed values
+        if user_type not in ['booth', 'volunteer']:
+            return Response(
+                {"error": "Invalid usertype. Allowed values are 'booth' or 'volunteer'."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # ✅ Get all events for the current business
         events = BizEvent.objects.filter(BizEventBizId=business_id)
 
-        # ✅ Get booths linked to these events
-        booths = models.TempUser.objects.filter(
+        # ✅ Filter TempUser by events and requested user_type
+        booths_or_volunteers = models.TempUser.objects.filter(
             event__in=events,
-            user_type='booth'
+            user_type=user_type
         ).order_by('id')
 
-        # ✅ Prepare response data
+        # ✅ Prepare response
         data = [
             {
-                "id": b.id,
-                "full_name": b.full_name,
-                "email": b.email,
-                "mobile_number": b.mobile_number,
-                "event_id": b.event.id,
-                "event_name": b.event.BizEventTitle 
+                "id": u.id,
+                "full_name": u.full_name,
+                "email": u.email,
+                "mobile_number": u.mobile_number,
+                "event_id": u.event.id,
+                "event_name": u.event.BizEventTitle
             }
-            for b in booths
+            for u in booths_or_volunteers
         ]
 
         return Response({"data": data}, status=status.HTTP_200_OK)
