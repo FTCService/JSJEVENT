@@ -19,7 +19,7 @@ urlpatterns = [
     path('events/<int:event_id>/attendance/', views.EventAttendanceView.as_view(), name='event-attendance'),
     
     path('all/registrations/', views.AllEventAllRegistrations.as_view(), name='all_event_all_registrations'),
-    path("create-event-user/", views.EventUserCreateApi.as_view(), name="create-event-user"),
+    path("create-event-user/<int:event_id>/", views.EventUserCreateApi.as_view(), name="create-event-user"),
     path('login/<str:token>/<int:event_id>/<str:user_type>/', views.TempUserLoginApi.as_view(), name='temp-user-login'),
     
     path("booth/participant/<event_id>/", views.MemberParticipantBooth.as_view(), name="manage-booth-participant"),

@@ -705,7 +705,7 @@ class EventUserCreateApi(APIView):
     authentication_classes = [SSOBusinessTokenAuthentication]
     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
+    def get(self, request, event_id):
         business_id = request.user.business_id
         
         # ✅ Read query parameter: defaults to 'booth' if not provided
@@ -719,7 +719,7 @@ class EventUserCreateApi(APIView):
             )
 
         # ✅ Get all events for the current business
-        events = BizEvent.objects.filter(BizEventBizId=business_id)
+        events = BizEvent.objects.filter(BizEventBizId=business_id , event_id=event_id)
 
         # ✅ Filter TempUser by events and requested user_type
         booths_or_volunteers = models.TempUser.objects.filter(
@@ -749,14 +749,14 @@ class EventUserCreateApi(APIView):
         },
         operation_description="Create a temporary event user (booth or volunteer) and generate login URL",
     )
-    def post(self, request):
+    def post(self, request, event_id):
         serializer = EventUserCreateSerializer(data=request.data)
         if serializer.is_valid():
             data = serializer.validated_data
 
             # Get event object
             try:
-                event = BizEvent.objects.get(id=data['BoothEvent'])
+                event = BizEvent.objects.get(id=event_id)
             except BizEvent.DoesNotExist:
                 return Response({"error": "Event not found."}, status=status.HTTP_404_NOT_FOUND)
 
