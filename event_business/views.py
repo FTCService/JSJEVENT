@@ -719,7 +719,7 @@ class EventUserCreateApi(APIView):
             )
 
         # ✅ Get all events for the current business
-        events = BizEvent.objects.filter(BizEventBizId=business_id , event_id=event_id)
+        events = BizEvent.objects.filter(BizEventBizId=business_id , id=event_id)
 
         # ✅ Filter TempUser by events and requested user_type
         booths_or_volunteers = models.TempUser.objects.filter(
