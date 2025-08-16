@@ -16,7 +16,15 @@ def get_member_details_by_card(card_number):
         return None
     
     
-    
+def get_member_details_by_mobile_number(mobile_number):
+    try:
+        response = requests.get(settings.AUTH_SERVER_URL + "/member-details/", params={"mobile_number": mobile_number})
+        if response.status_code == 200:
+            return response.json()
+        return None
+    except requests.RequestException as e:
+        print(f"Error contacting auth service: {e}")
+        return None
     
     
 # AUTH_SERVICE_BUSINESS_URL = settings.AUTH_SERVER_URL + "/business/details/",
@@ -77,3 +85,5 @@ def send_template_email(subject, template_name, context, recipient_list, attachm
             print(f"❌ Exception while sending email: {e}")
 
     threading.Thread(target=send_email).start()
+
+

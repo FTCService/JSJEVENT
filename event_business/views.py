@@ -17,7 +17,7 @@ from django.db.models import Q
 from datetime import datetime
 from django.template.loader import render_to_string
 import urllib.parse
-from helpers.utils import get_business_details_by_id, send_template_email, get_member_details_by_card
+from helpers.utils import get_business_details_by_id, send_template_email, get_member_details_by_card, get_member_details_by_mobile_number
 from . import models
 from helpers.temp_access import generate_temp_token, send_temp_login_link
 from .serializers import EventUserCreateSerializer, TempUserLoginSerializer,ManageBoothParticipantSerializer
@@ -761,7 +761,7 @@ class EventUserCreateApi(APIView):
                 return Response({"error": "Event not found."}, status=status.HTTP_404_NOT_FOUND)
 
             # Prevent duplicate active token users with same email and type
-            if models.TempUser.objects.filter(email=data['email'], user_type=data['user_type']).exists():
+            if models.TempUser.objects.filter(email=data['email'], user_type=data['user_type'], event=event).exists():
                 return Response(
                     {"error": f"Temp user with this email and type '{data['user_type']}' already exists."},
                     status=status.HTTP_400_BAD_REQUEST,
@@ -865,7 +865,7 @@ class TempUserLoginApi(APIView):
 class MemberParticipantBooth(APIView):
     """
     API to manage and retrieve participant details in the event booth,
-    using card number or mobile number.
+    using card number (16 digits) or mobile number (10 digits).
     """
 
     authentication_classes = [TempUserTokenAuthentication]
@@ -873,32 +873,63 @@ class MemberParticipantBooth(APIView):
 
     @swagger_auto_schema(
         manual_parameters=[
-            openapi.Parameter('card_no', openapi.IN_QUERY, description="Card number or Mobile number", type=openapi.TYPE_STRING),
+            openapi.Parameter('card_no', openapi.IN_QUERY, description="Card number (16 digits) or Mobile number (10 digits)", type=openapi.TYPE_STRING),
         ],
         responses={200: "Participant details"},
         tags=[" Booth "]
     )
     def get(self, request, event_id):
         card_no = request.GET.get("card_no")
-        if not card_no:
-            return Response({"error": "Please provide a card number or mobile number."},
-                            status=status.HTTP_400_BAD_REQUEST)
 
-      
-        # Check if booth is assigned to user
-        booth = models.TempUser.objects.get(id=request.user.id, event_id=event_id)
-        
-        # Try both number and string matches
+        if not card_no:
+            return Response(
+                {"error": "Please provide a card number or mobile number."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ✅ Decide whether it's a card number or mobile number
+        mbrcardno = None
+        if len(card_no) == 16 and card_no.isdigit():
+            # Directly use as card number
+            mbrcardno = card_no
+        elif len(card_no) == 10 and card_no.isdigit():
+            # Lookup by mobile number
+            member_data = get_member_details_by_mobile_number(card_no)
+            mbrcardno = member_data.get("mbrcardno") if member_data else None
+        else:
+            return Response(
+                {"error": "Invalid input. Provide a valid 16-digit card number or 10-digit mobile number."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not mbrcardno:
+            return Response(
+                {"success": False, "message": "Member not found."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ✅ Check if booth is assigned to user
+        try:
+            booth = models.TempUser.objects.get(id=request.user.id, event_id=event_id)
+        except models.TempUser.DoesNotExist:
+            return Response(
+                {"error": "Booth not assigned to this user for the event."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # ✅ Find participant in EventRegistration
         participant = EventRegistration.objects.filter(
-            EventMbrCard=card_no,
+            EventMbrCard=mbrcardno,
             Event_id=event_id
         ).first()
-        # print(participant,"==================")
-        if not participant:
-            return Response({"success":False,"message": "Participant not found for this event."},
-                            status=status.HTTP_404_NOT_FOUND)
 
-        # try:
+        if not participant:
+            return Response(
+                {"success": False, "message": "The member is not registered for this event."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ✅ Build response
         participant_info = {
             "participant_id": participant.id,
             "card_no": participant.EventMbrCard,
@@ -911,23 +942,20 @@ class MemberParticipantBooth(APIView):
             "SkillsCompetencies": participant.SkillsCompetencies,
             "AchievementsExtracurricular": participant.AchievementsExtracurricular,
             "OtherDetails": participant.OtherDetails,
-            # "EventRegistrationData": participant.EventRegistrationData,
             "EventAttended": participant.EventAttended,
             "EventRegistered": participant.EventRegistered,
             "created_at": participant.created_at,
         }
 
         return Response(participant_info, status=status.HTTP_200_OK)
-        # except Exception as e:
-        #     return Response({"error": f"Error parsing participant data: {str(e)}"},
-        #                     status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     @swagger_auto_schema(
     request_body=ManageBoothParticipantSerializer,
     tags=[" Booth "]
     )
     def post(self, request, event_id):
         """
-        Add or update participant information in a booth for a specific event using card or mobile number.
+        Add or update participant information in a booth for a specific event 
+        using card number (16 digits) or mobile number (10 digits).
         Save full participant response with timestamp.
         """
         serializer = ManageBoothParticipantSerializer(data=request.data)
@@ -936,22 +964,49 @@ class MemberParticipantBooth(APIView):
             status_value = serializer.validated_data["status"]
             comment = serializer.validated_data["comment"]
 
-            
-            booth = models.TempUser.objects.get(id=request.user.id, event_id=event_id)
+            # ✅ Check booth assignment
+            try:
+                booth = models.TempUser.objects.get(id=request.user.id, event_id=event_id)
+            except models.TempUser.DoesNotExist:
+                return Response(
+                    {"error": "Booth not assigned to this user for the event."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
-            # Search participant by card or mobile number
+            # ✅ Decide card_no vs mobile_no
+            mbrcardno = None
+            if len(card_no) == 16 and card_no.isdigit():
+                mbrcardno = card_no
+            elif len(card_no) == 10 and card_no.isdigit():
+                member_data = get_member_details_by_mobile_number(card_no)
+                mbrcardno = member_data.get("mbrcardno") if member_data else None
+            else:
+                return Response(
+                    {"error": "Invalid input. Provide a valid 16-digit card number or 10-digit mobile number."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if not mbrcardno:
+                return Response(
+                    {"error": "Member not found."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # ✅ Fetch participant
             participant = EventRegistration.objects.filter(
-                Q(EventMbrCard=card_no) | Q(BasicInformation__mobile_number__value=card_no),
+                EventMbrCard=mbrcardno,
                 Event_id=event_id
             ).first()
 
             if not participant:
-                return Response({"error": "Participant not found for this event."},
-                                status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"error": "Participant not found for this event."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
 
-            # Prepare data to save
+            # ✅ Prepare data to save
             entry = {
-                "card_no": card_no,
+                "card_no": mbrcardno,
                 "status": status_value,
                 "comment": comment,
                 "timestamp": datetime.now().isoformat(),
@@ -967,14 +1022,15 @@ class MemberParticipantBooth(APIView):
             if booth.boothintraction is None:
                 booth.boothintraction = {}
 
-            # Save by participant ID as key
+            # ✅ Save by participant ID as key
             booth.boothintraction[str(participant.id)] = entry
             booth.save()
 
-            return Response({"message": "Participant details updated and saved successfully."},
-                            status=status.HTTP_200_OK)
+            return Response(
+                {"message": "Participant details updated and saved successfully."},
+                status=status.HTTP_200_OK
+            )
 
-          
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
