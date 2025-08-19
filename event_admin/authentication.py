@@ -14,7 +14,7 @@ class SSOUserTokenAuthentication(BaseAuthentication):
 
         try:
             response = requests.post(
-                settings.AUTH_SERVER_URL + "/user/verify-token/",
+                settings.AUTH_SERVER_URL + "api/user/verify-token/",
                 json={"token": token},
                 timeout=5
             )

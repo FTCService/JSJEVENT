@@ -15,7 +15,7 @@ from datetime import timedelta
 from django.core.paginator import Paginator
 from django.db.models import Q
 from datetime import datetime
-from helpers.utils import get_member_details_by_card
+from helpers.utils import get_member_details_by_card, get_member_job_prifile_by_card
 from django.shortcuts import get_object_or_404
 
 
@@ -69,46 +69,49 @@ class MbrEventDetailView(APIView):
         serializer = MbrEventSerializer(event)
         event_data = serializer.data
 
-        # Fetch JobProfile of the current user
-        
-            # Try to get Member instance linked to the logged-in user
-        member = request.user.mbrcardno
-        if not member:
+        # request.user contains mbrcardno
+        member_cardno = request.user.mbrcardno
+        if not member_cardno:
             return Response({
                 "status": False,
                 "message": "Invalid user. Member details not found."
             }, status=status.HTTP_200_OK)
-            
-        # try:
-        #     job_profile = JobProfile.objects.get(MbrCardNo=member)
-        # except JobProfile.DoesNotExist:
-        #     job_profile = None
 
-        # # If job_profile exists, fill registration form values
-        # if job_profile:
-        #     profile_sections = {
-        #         "basicInformation": job_profile.BasicInformation,
-        #         "CareerObjectivesPreferences": job_profile.CareerObjectivesPreferences,
-        #         "EducationDetails": job_profile.EducationDetails,
-        #         "WorkExperience": job_profile.WorkExperience,
-        #         "SkillsCompetencies": job_profile.SkillsCompetencies,
-        #         "AchievementsExtracurricular": job_profile.AchievementsExtracurricular,
-        #         "OtherDetails": job_profile.OtherDetails,
-        #     }
+        # Fetch job profile via remote API
+        job_profile = get_member_job_prifile_by_card(member_cardno)
+        if not job_profile:
+            return Response({
+                "status": False,
+                "message": "Job profile not found for the member."
+            }, status=status.HTTP_200_OK)
 
-            # # Loop through each section and set values
-            # reg_form = event_data.get("BizEventRegistrationForm", {})
-            # for section_key, section_fields in reg_form.items():
-            #     if section_key in profile_sections:
-            #         job_section_data = profile_sections[section_key]
-            #         for field_key in section_fields:
-            #             if field_key in job_section_data and "value" in job_section_data[field_key]:
-            #                 reg_form[section_key][field_key]["value"] = job_section_data[field_key]["value"]
+        # Auto-fill basic information
+        reg_form = event_data.get("BizEventRegistrationForm", {})
+        basic_info_form = reg_form.get("basicInformation", {})
 
-            # event_data["BizEventRegistrationForm"] = reg_form
+        # Get member info from job profile (dict)
+        basic_info_profile = job_profile.get("BasicInformation", {})
+
+        # Loop through the basic info fields and inject values
+        for field_key, field_data in basic_info_form.items():
+            if field_key in basic_info_profile:
+                basic_info_form[field_key]["value"] = basic_info_profile[field_key]
+            else:
+                # fallback from member_cardno if needed
+                if field_key == "full_name":
+                    basic_info_form[field_key]["value"] = job_profile.get("full_name", None)
+                elif field_key == "email":
+                    basic_info_form[field_key]["value"] = job_profile.get("email", None)
+                elif field_key == "mobile_number":
+                    basic_info_form[field_key]["value"] = job_profile.get("mobile_number", None)
+
+
+        reg_form["basicInformation"] = basic_info_form
+        event_data["BizEventRegistrationForm"] = reg_form
 
         return Response(event_data, status=status.HTTP_200_OK)
-    
+
+
     
     
     
@@ -281,10 +284,9 @@ class MemberSelfAttendanceApi(APIView):
         }
     )
     def post(self, request):
-        mbrcardno = request.user.mbrcardno
         event_id = request.data.get("event_id")
 
-        if not mbrcardno or not event_id:
+        if not event_id:
             return Response({
                 "status": False,
                 "message": "Both mbrcardno and event_id are required"
@@ -299,21 +301,15 @@ class MemberSelfAttendanceApi(APIView):
             }, status=status.HTTP_200_OK)
 
         try:
-            event = BizEvent.objects.get(id=event_id)
-        except BizEvent.DoesNotExist:
-            return Response({
-                "status": False,
-                "message": "Event not found"
-            }, status=status.HTTP_200_OK)
-
-        try:
-            registration = EventRegistration.objects.get(Event=event, EventMbrCard=member)
+            # ✅ Match event and member together
+            registration = EventRegistration.objects.get(Event=event_id, EventMbrCard=member)
         except EventRegistration.DoesNotExist:
             return Response({
                 "status": False,
-                "message": "Member is not registered for this event"
+                "message": "Member is not registered for this event or invalid QR code"
             }, status=status.HTTP_400_BAD_REQUEST)
-
+           
+            
         if registration.EventAttended:
             return Response({
                 "status": False,
