@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Event Attendance Confirmation</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f6f6f6;
+            margin: 0;
+            padding: 0;
+        }
+        .email-container {
+            max-width: 600px;
+            margin: 30px auto;
+            background-color: #ffffff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            padding-bottom: 20px;
+        }
+        .header h2 {
+            margin: 0;
+            color: #333333;
+        }
+        .content {
+            font-size: 16px;
+            color: #555555;
+            line-height: 1.5;
+        }
+        .details {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f2f2f2;
+            border-radius: 5px;
+        }
+        .details p {
+            margin: 5px 0;
+        }
+        .footer {
+            text-align: center;
+            font-size: 14px;
+            color: #999999;
+            margin-top: 20px;
+        }
+        .button {
+            display: inline-block;
+            background-color: #4CAF50;
+            color: #ffffff;
+            padding: 10px 20px;
+            border-radius: 5px;
+            text-decoration: none;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            <h2>Event Attendance Confirmation</h2>
+        </div>
+        <div class="content">
+            <p>Dear {{ full_name }},</p>
+            <p>Thank you for attending the event. Your attendance has been successfully marked.</p>
+
+            <div class="details">
+                <p><strong>Event Name:</strong> {{ event_name }}</p>
+                <p><strong>Date:</strong> {{ event_date }}</p>
+                <p><strong>Venue:</strong> {{ event_venue }}</p>
+                <p><strong>Marked At:</strong> {{ attendance_time }}</p>
+            </div>
+
+            <p>We look forward to seeing you at our future events!</p>
+
+            <a href="#" class="button">View Event Details</a>
+        </div>
+        <div class="footer">
+            <p>&copy; {{ current_year }} Your Organization. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
