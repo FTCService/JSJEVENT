@@ -15,7 +15,7 @@ from datetime import timedelta
 from django.core.paginator import Paginator
 from django.db.models import Q
 from datetime import datetime
-from helpers.utils import get_member_details_by_card, get_member_job_prifile_by_card
+from helpers.utils import get_member_details_by_card, get_member_job_prifile_by_card, send_template_email
 from django.shortcuts import get_object_or_404
 
 
@@ -77,37 +77,34 @@ class MbrEventDetailView(APIView):
                 "message": "Invalid user. Member details not found."
             }, status=status.HTTP_200_OK)
 
-        # Fetch job profile via remote API
-        job_profile = get_member_job_prifile_by_card(member_cardno)
-        if not job_profile:
-            return Response({
-                "status": False,
-                "message": "Job profile not found for the member."
-            }, status=status.HTTP_200_OK)
+        # # Fetch job profile via remote API
+        # job_profile = get_member_job_prifile_by_card(member_cardno)
+        # basic_info_form = reg_form.get("basicInformation", {})
+        
 
-        # Auto-fill basic information
-        reg_form = event_data.get("BizEventRegistrationForm", {})
-        basic_info_form = reg_form.get("basicInformation", {})
+        # # Auto-fill basic information
+        # reg_form = event_data.get("BizEventRegistrationForm", {})
+        
 
-        # Get member info from job profile (dict)
-        basic_info_profile = job_profile.get("BasicInformation", {})
+        # # Get member info from job profile (dict)
+        # basic_info_profile = job_profile.get("basicInformation", {})
 
-        # Loop through the basic info fields and inject values
-        for field_key, field_data in basic_info_form.items():
-            if field_key in basic_info_profile:
-                basic_info_form[field_key]["value"] = basic_info_profile[field_key]
-            else:
-                # fallback from member_cardno if needed
-                if field_key == "full_name":
-                    basic_info_form[field_key]["value"] = job_profile.get("full_name", None)
-                elif field_key == "email":
-                    basic_info_form[field_key]["value"] = job_profile.get("email", None)
-                elif field_key == "mobile_number":
-                    basic_info_form[field_key]["value"] = job_profile.get("mobile_number", None)
+        # # Loop through the basic info fields and inject values
+        # for field_key, field_data in basic_info_form.items():
+        #     if field_key in basic_info_profile:
+        #         basic_info_form[field_key]["value"] = basic_info_profile[field_key]
+        #     else:
+        #         # fallback from member_cardno if needed
+        #         if field_key == "full_name":
+        #             basic_info_form[field_key]["value"] = job_profile.get("full_name", None)
+        #         elif field_key == "email":
+        #             basic_info_form[field_key]["value"] = job_profile.get("email", None)
+        #         elif field_key == "mobile_number":
+        #             basic_info_form[field_key]["value"] = job_profile.get("mobile_number", None)
 
 
-        reg_form["basicInformation"] = basic_info_form
-        event_data["BizEventRegistrationForm"] = reg_form
+        # reg_form["basicInformation"] = basic_info_form
+        # event_data["BizEventRegistrationForm"] = reg_form
 
         return Response(event_data, status=status.HTTP_200_OK)
 
@@ -174,6 +171,8 @@ class EventRegistrationView(APIView):
 
        
         member = request.user.mbrcardno
+        email= request.user.email
+        full_name = request.user.full_name if hasattr(request.user, "full_name") else ""  
         if not member:
             return Response(
                 {"success": False, "error": "Member with this card number not found"},
@@ -220,36 +219,30 @@ class EventRegistrationView(APIView):
             EventRegistrationData=event_registration_data,
             EventRegistered=True
         )
+        # 📧 Prepare email context with all details
+        email_context = {
+            "full_name": full_name,
+            "card_number": member,
+            "event_name": event.EventTitle,
+            "event_date": event.EventDate.strftime("%d-%m-%Y") if event.EventDate else None,
+            "event_location": event.EventLocation,
+            "registration_id": registration.id,
+            "basic_information": basic_information,
+            "career_objectives": career_objectives,
+            "education_details": education_details,
+            "work_experience": work_experience,
+            "skills_competencies": skills_competencies,
+            "achievements_extracurricular": achievements_extracurricular,
+            "other_details": other_details,
+        }
         
-        # JobProfile.objects.update_or_create(
-        #     MbrCardNo=member,
-        #     defaults={
-        #         "BasicInformation": basic_information,
-        #         "CareerObjectivesPreferences": career_objectives,
-        #         "EducationDetails": education_details,
-        #         "WorkExperience": work_experience,
-        #         "SkillsCompetencies": skills_competencies,
-        #         "AchievementsExtracurricular": achievements_extracurricular,
-        #         "OtherDetails": other_details,
-        #     }
-        # )
-        
-        # Extract email and full name from nested BasicInformation
-        # email_info = basic_information.get("email", {}) or basic_information.get("email", {})
-        # member_email = email_info.get("value", member.email)
-
-        # name_info = basic_information.get("full_name", {}) or basic_information.get("name", {})
-        # member_name = name_info.get("value", member.full_name)
-
-        # if member_email:
-        #     send_event_registration_email(
-        #         member_email=member_email,
-        #         member_name=member_name,
-        #         event_title=event.BizEventTitle,
-        #         event_date=event.BizEventStartDate,
-        #         event_venue=event.BizEventLocation
-        #     )
-            
+        # Send email
+        send_template_email(
+            subject=f"Event Registration Confirmation - {event.EventTitle}",
+            template_name="email_template/registration_notification.html",
+            context=email_context,
+            recipient_list=[email]
+        )
         serializer = EventRegistrationSerializer(registration)
         return Response(
             {"EventRegistered":True,"success": True, "message": "Registration successful", "data": serializer.data},
@@ -294,6 +287,7 @@ class MemberSelfAttendanceApi(APIView):
 
         
         member = request.user.mbrcardno
+        email = request.user.email
         if not member:
             return Response({
                 "status": False,
@@ -318,7 +312,22 @@ class MemberSelfAttendanceApi(APIView):
 
         registration.EventAttended = True
         registration.save()
+        # Send email with event details
+        email_context = {
+            "full_name": request.user.full_name,
+            "event_name": registration.Event.EventName,
+            "event_date": registration.Event.EventDate,
+            "event_venue": registration.Event.EventVenue,
+            "attendance_time": registration.AttendanceMarkedAt,
+            "current_year": datetime.now().year
+        }
 
+        send_template_email(
+            subject="Event Attendance Confirmation",
+            template_name="email_template/attendance_confirmation.html",
+            context=email_context,
+            recipient_list=[email]
+        )
         return Response({
             "status": True,
             "message": "Attendance marked successfully"

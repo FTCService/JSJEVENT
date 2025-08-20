@@ -16,6 +16,7 @@ urlpatterns = [
    path("fields/<int:id>/", views.JobProfileFieldDetailApi.as_view(), name="field-detail"),
   
   
+  
 ]
 
   
