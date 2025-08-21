@@ -171,7 +171,9 @@ class EventRegistrationView(APIView):
 
        
         member = request.user.mbrcardno
-        email= request.user.email
+        member_data = get_member_details_by_card(member)
+        email = member_data.get('email')
+        # email= request.user.email
         full_name = request.user.full_name if hasattr(request.user, "full_name") else ""  
         if not member:
             return Response(
@@ -223,9 +225,9 @@ class EventRegistrationView(APIView):
         email_context = {
             "full_name": full_name,
             "card_number": member,
-            "event_name": event.EventTitle,
-            "event_date": event.EventDate.strftime("%d-%m-%Y") if event.EventDate else None,
-            "event_location": event.EventLocation,
+            "event_name": event.BizEventTitle,
+            "event_date": event.BizEventStartDate.strftime("%d-%m-%Y") ,
+            "event_location": event.BizEventLocation,
             "registration_id": registration.id,
             "basic_information": basic_information,
             "career_objectives": career_objectives,
@@ -238,7 +240,7 @@ class EventRegistrationView(APIView):
         
         # Send email
         send_template_email(
-            subject=f"Event Registration Confirmation - {event.EventTitle}",
+            subject=f"Event Registration Confirmation - {event.BizEventTitle}",
             template_name="email_template/registration_notification.html",
             context=email_context,
             recipient_list=[email]
@@ -287,13 +289,15 @@ class MemberSelfAttendanceApi(APIView):
 
         
         member = request.user.mbrcardno
-        email = request.user.email
+        
         if not member:
             return Response({
                 "status": False,
                 "message": "Member not found"
             }, status=status.HTTP_200_OK)
-
+        member_data = get_member_details_by_card(member)
+        email = member_data.get('email')
+        full_name = member
         try:
             # ✅ Match event and member together
             registration = EventRegistration.objects.get(Event=event_id, EventMbrCard=member)
@@ -314,11 +318,11 @@ class MemberSelfAttendanceApi(APIView):
         registration.save()
         # Send email with event details
         email_context = {
-            "full_name": request.user.full_name,
-            "event_name": registration.Event.EventName,
-            "event_date": registration.Event.EventDate,
-            "event_venue": registration.Event.EventVenue,
-            "attendance_time": registration.AttendanceMarkedAt,
+            "full_name": full_name,
+            "event_name": registration.Event.BizEventTitle,
+            "event_date": registration.Event.BizEventStartDate,
+            "event_venue": registration.Event.BizEventEndDate,
+            "attendance_time": registration.EventAttended,
             "current_year": datetime.now().year
         }
 
