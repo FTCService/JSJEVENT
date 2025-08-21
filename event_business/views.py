@@ -21,7 +21,7 @@ from helpers.utils import get_business_details_by_id, send_template_email, get_m
 from . import models
 from helpers.temp_access import generate_temp_token, send_temp_login_link
 from .serializers import EventUserCreateSerializer, TempUserLoginSerializer,ManageBoothParticipantSerializer
-
+from helpers.pagination import paginate
 
 
 class BizEventListCreateView(APIView):
@@ -263,29 +263,44 @@ class MemberRegistrationListView(APIView):
     authentication_classes = [SSOBusinessTokenAuthentication]
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        operation_description="Fetch all registrations for a given event (paginated)",
+        responses={200: EventRegistrationSerializer(many=True)},
+        tags=["Event Registrations"]
+    )
     def get(self, request, event_id):
         """Fetch all registrations for a given event_id"""
         event = get_object_or_404(BizEvent, id=event_id)
-        registrations = EventRegistration.objects.filter(Event=event)
-        
+        registrations = EventRegistration.objects.filter(Event=event).order_by("-created_at")
 
         if not registrations.exists():
             return Response(
                 {"success": False, "message": "No registrations found for this event"},
                 status=status.HTTP_200_OK
             )
-            
+
+        # Paginate registrations
+        page, pagination_meta = paginate(
+            request,
+            registrations,
+            data_per_page=int(request.GET.get("page_size", 20))
+        )
+
+        serializer = EventRegistrationSerializer(page, many=True)
+
         total_count = registrations.count()
         attended_count = registrations.filter(EventAttended=True).count()
         pending_count = total_count - attended_count
 
-        serializer = EventRegistrationSerializer(registrations, many=True)
-        return Response(
-            {"success": True, "message": "Registrations fetched successfully", "data": serializer.data,"total_registrations": total_count,
-                    "attended": attended_count,
-                    "pending_attendance": pending_count},
-            status=status.HTTP_200_OK
-        )
+        return Response({
+            "status": 200,
+            "message": "Registrations fetched successfully",
+            "data": serializer.data,
+            "pagination_meta_data": pagination_meta,
+            "total_registrations": total_count,
+            "attended": attended_count,
+            "pending_attendance": pending_count
+        }, status=status.HTTP_200_OK)
         
         
         
@@ -295,24 +310,38 @@ class MemberAttendanceList(APIView):
     authentication_classes = [SSOBusinessTokenAuthentication]
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        operation_description="Fetch all attended registrations for a given event (paginated)",
+        responses={200: "Paginated Event Registration List"},
+        tags=["Event Attendance"]
+    )
     def get(self, request, event_id):
-        """Fetch all registrations for a given event_id"""
+        """Fetch all attended registrations for a given event_id"""
         event = get_object_or_404(BizEvent, id=event_id)
-        registrations = EventRegistration.objects.filter(Event=event,EventAttended=True)
-        
+        registrations = EventRegistration.objects.filter(Event=event, EventAttended=True).order_by("-created_at")
 
         if not registrations.exists():
             return Response(
-                {"success": False, "message": "No registrations found for this event"},
+                {"success": False, "message": "No attended registrations found for this event"},
                 status=status.HTTP_200_OK
             )
-            
-        
-        serializer = EventRegistrationSerializer(registrations, many=True)
-        return Response(
-            {"success": True, "message": "Event Attended fetched successfully", "data": serializer.data,},
-            status=status.HTTP_200_OK
+
+        # Pagination
+        page, pagination_meta = paginate(
+            request,
+            registrations,
+            data_per_page=int(request.GET.get("page_size", 20))
         )
+
+        serializer = EventRegistrationSerializer(page, many=True)
+
+        return Response({
+            "status": 200,
+            "message": "Event attended registrations fetched successfully",
+            "data": serializer.data,
+            "pagination_meta_data": pagination_meta,
+            "total_attended": registrations.count()
+        }, status=status.HTTP_200_OK)
         
         
         
@@ -322,24 +351,38 @@ class MemberPendingAttendanceList(APIView):
     authentication_classes = [SSOBusinessTokenAuthentication]
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        operation_description="Fetch all pending attendance registrations for a given event (paginated)",
+        responses={200: "Paginated Event Registration List"},
+        tags=["Event Attendance"]
+    )
     def get(self, request, event_id):
-        """Fetch all registrations for a given event_id"""
+        """Fetch all pending attendance registrations for a given event_id"""
         event = get_object_or_404(BizEvent, id=event_id)
-        registrations = EventRegistration.objects.filter(Event=event,EventAttended=False)
-        
+        registrations = EventRegistration.objects.filter(Event=event, EventAttended=False).order_by("-created_at")
 
         if not registrations.exists():
             return Response(
-                {"success": False, "message": "No registrations found for this event"},
+                {"success": False, "message": "No pending registrations found for this event"},
                 status=status.HTTP_200_OK
             )
-            
-        
-        serializer = EventRegistrationSerializer(registrations, many=True)
-        return Response(
-            {"success": True, "message": "Event Pending Attended fetched successfully", "data": serializer.data,},
-            status=status.HTTP_200_OK
+
+        # Pagination
+        page, pagination_meta = paginate(
+            request,
+            registrations,
+            data_per_page=int(request.GET.get("page_size", 20))
         )
+
+        serializer = EventRegistrationSerializer(page, many=True)
+
+        return Response({
+            "status": 200,
+            "message": "Event pending attendance fetched successfully",
+            "data": serializer.data,
+            "pagination_meta_data": pagination_meta,
+            "total_pending": registrations.count()
+        }, status=status.HTTP_200_OK)
         
         
 class MemberRegistrationDetailView(APIView):
@@ -598,22 +641,27 @@ class AllEventAllRegistrations(APIView):
     authentication_classes = [SSOBusinessTokenAuthentication]
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        operation_description="Retrieve all event registrations across all events (paginated).",
+        responses={200: EventRegistrationSerializer(many=True)},
+        tags=["Event Registrations"]
+    )
     def get(self, request):
         registrations = EventRegistration.objects.all().order_by("-created_at")
-        paginator = Paginator(registrations, 20)  # Adjust page size as needed
 
-        page_number = request.query_params.get('page', 1)
-        page_obj = paginator.get_page(page_number)
+        # Use custom paginate helper
+        page, pagination_meta = paginate(
+            request,
+            registrations,
+            data_per_page=int(request.GET.get("page_size", 20))
+        )
 
-        serializer = EventRegistrationSerializer(page_obj, many=True)
+        serialized_data = EventRegistrationSerializer(page, many=True).data
 
         return Response({
-            "success": True,
-            "message": "All event registrations fetched successfully",
-            "count": paginator.count,
-            "total_pages": paginator.num_pages,
-            "current_page": page_obj.number,
-            "data": serializer.data
+            "status": 200,
+            "data": serialized_data,
+            "pagination_meta_data": pagination_meta
         }, status=status.HTTP_200_OK)
         
         
